@@ -65,9 +65,9 @@ const apiFetchFromCandidates = async <T>(
 
 // ==================== AUTH ====================
 export const authApi = {
-  login: (email: string, password: string, role?: string) =>
+  login: (email: string, password: string, role?: string, phone?: string) =>
     apiFetch<{ token: string; user: any; message: string }>("/auth/login", {
-      method: "POST", body: JSON.stringify({ email, password, role }),
+      method: "POST", body: JSON.stringify({ email, phone, password, role }),
     }),
   register: (data: any) =>
     apiFetch<{ token: string; user: any; message: string }>("/auth/register", {
@@ -83,16 +83,31 @@ export const authApi = {
       ["/auth/forgot-password", "/auth/request-reset-otp", "/auth/forgot-password-otp"],
       { method: "POST", body: JSON.stringify({ email, role }) }
     ),
+  requestPasswordResetOtpPhone: (phone: string, role?: string) =>
+    apiFetch<{ message: string; otp?: string }>("/auth/request-reset-otp-phone", {
+      method: "POST",
+      body: JSON.stringify({ phone, role }),
+    }),
   verifyPasswordResetOtp: (email: string, otp: string, role?: string) =>
     apiFetchFromCandidates<{ message: string }>(
       ["/auth/verify-reset-otp", "/auth/verify-otp"],
       { method: "POST", body: JSON.stringify({ email, otp, role }) }
     ),
+  verifyPasswordResetOtpPhone: (phone: string, otp: string, role?: string) =>
+    apiFetch<{ message: string }>("/auth/verify-reset-otp-phone", {
+      method: "POST",
+      body: JSON.stringify({ phone, otp, role }),
+    }),
   resetPasswordWithOtp: (email: string, otp: string, newPassword: string, role?: string) =>
     apiFetchFromCandidates<{ message: string }>(
       ["/auth/reset-password-with-otp", "/auth/reset-password"],
       { method: "POST", body: JSON.stringify({ email, otp, newPassword, role }) }
     ),
+  resetPasswordWithOtpPhone: (phone: string, otp: string, newPassword: string, role?: string) =>
+    apiFetch<{ message: string }>("/auth/reset-password-phone", {
+      method: "POST",
+      body: JSON.stringify({ phone, otp, newPassword, role }),
+    }),
 };
 
 // ==================== PRODUCTS ====================
