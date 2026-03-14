@@ -5,8 +5,8 @@ type EventCallback = (data: any) => void;
 class WebSocketService {
   private socket: Socket | null = null;
   private callbacks: Map<string, EventCallback[]> = new Map();
-  private readonly LIVE_WS_URL = "https://ashwamitra-backend.onrender.com";
-  private readonly LOCAL_WS_URL = "http://localhost:5000";
+  private readonly LIVE_WS_URL = "https://ashwamitra-main.onrender.com";
+  private readonly LOCAL_WS_URL = "https://ashwamitra-main.onrender.com";
   private readonly wsUrl = (import.meta.env.VITE_WS_URL as string | undefined)?.trim() || "";
   private readonly wsCandidates = Array.from(
     new Set(
