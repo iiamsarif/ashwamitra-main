@@ -1,7 +1,7 @@
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL as string | undefined;
 const configuredApiHost = import.meta.env.VITE_API_URL as string | undefined;
-const LIVE_API_URL = "https://ashwamitra-backend.onrender.com/api";
-const LOCAL_API_URL = "http://localhost:5000/api";
+const LIVE_API_URL = "https://ashwamitra-main.onrender.com/api";
+const LOCAL_API_URL = "https://ashwamitra-main.onrender.com/api";
 
 const normalizeApiBase = (value?: string) => {
   if (!value) return "";
