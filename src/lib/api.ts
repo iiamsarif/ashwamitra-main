@@ -222,6 +222,18 @@ export const contactApi = {
     }),
 };
 
+// ==================== PUBLIC ====================
+export const publicApi = {
+  getStats: () =>
+    apiFetch<{
+      totalFarmers: number;
+      totalBusinesses: number;
+      totalCustomers: number;
+      totalOrders: number;
+      totalRevenue: number;
+    }>("/public/stats"),
+};
+
 // ==================== DELIVERY ====================
 export const deliveryApi = {
   updateDelivery: (orderId: string, data: any) =>
