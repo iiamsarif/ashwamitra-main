@@ -103,15 +103,16 @@ const AuthForm: React.FC<AuthFormProps> = ({ role, onBack }) => {
         toast.success("Registration successful!");
         navigate(`/${role}/dashboard`);
       } else if (mode === "login") {
-        await login(form.email, form.password, role || undefined);
+        const isFarmerLogin = role === "farmer";
+        await login(isFarmerLogin ? "" : form.email, form.password, role || undefined, isFarmerLogin ? form.phone : undefined);
         toast.success("Login successful!");
         navigate(`/${role}/dashboard`);
       } else if (mode === "forgot") {
-        await authApi.requestPasswordResetOtp(form.email, role || undefined);
-        toast.success("OTP sent to your email.");
+        await authApi.requestPasswordResetOtpPhone(form.phone, role || undefined);
+        toast.success("OTP sent to your phone number.");
         setMode("verify_otp");
       } else if (mode === "verify_otp") {
-        await authApi.verifyPasswordResetOtp(form.email, form.otp, role || undefined);
+        await authApi.verifyPasswordResetOtpPhone(form.phone, form.otp, role || undefined);
         toast.success("OTP verified. Set your new password.");
         setMode("reset_password");
       } else if (mode === "reset_password") {
@@ -121,7 +122,7 @@ const AuthForm: React.FC<AuthFormProps> = ({ role, onBack }) => {
         if (form.password !== form.confirmPassword) {
           throw new Error("Passwords do not match");
         }
-        await authApi.resetPasswordWithOtp(form.email, form.otp, form.password, role || undefined);
+        await authApi.resetPasswordWithOtpPhone(form.phone, form.otp, form.password, role || undefined);
         toast.success("Password reset successful. Please login.");
         setMode("login");
         setForm((prev) => ({
@@ -233,21 +234,57 @@ const AuthForm: React.FC<AuthFormProps> = ({ role, onBack }) => {
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-foreground">Email Address</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  type="email"
-                  placeholder="your@email.com"
-                  className="pl-10"
-                  value={form.email}
-                  onChange={(e) => handleChange("email", e.target.value)}
-                  readOnly={mode === "verify_otp" || mode === "reset_password"}
-                  required
-                />
+            {!isResetFlow && (role !== "farmer" || mode === "register") && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-foreground">Email Address</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="email"
+                    placeholder="your@email.com"
+                    className="pl-10"
+                    value={form.email}
+                    onChange={(e) => handleChange("email", e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-            </div>
+            )}
+
+            {!isResetFlow && role === "farmer" && mode === "login" && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-foreground">Phone Number</Label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    className="pl-10"
+                    value={form.phone}
+                    onChange={(e) => handleChange("phone", e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            {isResetFlow && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-foreground">Phone Number</Label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    className="pl-10"
+                    value={form.phone}
+                    onChange={(e) => handleChange("phone", e.target.value)}
+                    readOnly={mode === "verify_otp" || mode === "reset_password"}
+                    required
+                  />
+                </div>
+              </div>
+            )}
 
             {(mode === "login" || mode === "register" || mode === "reset_password") && (
               <div className="space-y-1.5">
