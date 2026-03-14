@@ -4,6 +4,8 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Wheat, Building2, ShoppingCart, Contact2Icon } from "lucide-react";
 import heroFarm from "@/assets/hero-farm.jpg";
+import { useQuery } from "@tanstack/react-query";
+import { publicApi } from "@/lib/api";
 
 const Hero: React.FC = () => {
   const navigate = useNavigate();
@@ -39,11 +41,43 @@ const Hero: React.FC = () => {
     },
   ];
 
+  const { data: statsData, isLoading } = useQuery({
+    queryKey: ["publicStats"],
+    queryFn: publicApi.getStats,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const formatCount = (value: number) => {
+    if (value >= 1e7) return `${(value / 1e7).toFixed(1).replace(/\.0$/, "")}Cr+`;
+    if (value >= 1e5) return `${(value / 1e5).toFixed(1).replace(/\.0$/, "")}L+`;
+    if (value >= 1e3) return `${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K+`;
+    return `${value}+`;
+  };
+
+  const formatRevenue = (value: number) => {
+    if (value >= 1e7) return `Rs ${(value / 1e7).toFixed(1).replace(/\.0$/, "")}Cr`;
+    if (value >= 1e5) return `Rs ${(value / 1e5).toFixed(1).replace(/\.0$/, "")}L`;
+    if (value >= 1e3) return `Rs ${(value / 1e3).toFixed(1).replace(/\.0$/, "")}K`;
+    return `Rs ${Math.round(value)}`;
+  };
+
   const stats = [
-    { value: "12,500+", label: "Farmers" },
-    { value: "₹48Cr", label: "Transactions" },
-    { value: "850+", label: "Businesses" },
-    { value: "2.1L+", label: "Customers" },
+    {
+      value: statsData ? formatCount(statsData.totalFarmers) : "12,500+",
+      label: "Farmers",
+    },
+    {
+      value: statsData ? formatRevenue(statsData.totalRevenue) : "Rs 48Cr",
+      label: "Transactions",
+    },
+    {
+      value: statsData ? formatCount(statsData.totalBusinesses) : "850+",
+      label: "Businesses",
+    },
+    {
+      value: statsData ? formatCount(statsData.totalCustomers) : "2.1L+",
+      label: "Customers",
+    },
   ];
 
   return (
@@ -93,7 +127,7 @@ const Hero: React.FC = () => {
                 className="text-center bg-white/10 backdrop-blur rounded-xl p-3 sm:p-4 border border-white/20"
               >
                 <div className="text-yellow-400 font-bold text-base sm:text-lg">
-                  {stat.value}
+                  {isLoading ? "..." : stat.value}
                 </div>
                 <div className="text-xs sm:text-sm text-green-100">
                   {stat.label}
@@ -108,3 +142,5 @@ const Hero: React.FC = () => {
 };
 
 export default Hero;
+
+
