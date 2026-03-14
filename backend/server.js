@@ -22,6 +22,7 @@ const walletRoutes = require("./routes/wallet");
 const notificationRoutes = require("./routes/notifications");
 const razorpayRoutes = require("./routes/razorpay");
 const contactMessageRoutes = require("./routes/contactMessages");
+const publicRoutes = require("./routes/public");
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -92,6 +93,7 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/razorpay", razorpayRoutes);
 app.use("/api/contact-messages", contactMessageRoutes);
+app.use("/api/public", publicRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
