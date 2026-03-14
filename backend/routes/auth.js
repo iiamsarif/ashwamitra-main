@@ -6,6 +6,7 @@ const Farmer = require("../models/Farmer");
 const Business = require("../models/Business");
 const Customer = require("../models/Customer");
 const { hasEmailConfig, sendResetOtpEmail } = require("../services/emailService");
+const { isTwilioConfigured, sendPhoneOtp, verifyPhoneOtp } = require("../services/twilioVerify");
 const { auth } = require("../middleware/auth");
 const { emitRealtimeEvent, EVENT_TYPES } = require("../utils/realtime");
 
@@ -23,6 +24,11 @@ const OTP_RESET_LIMIT_MAX = Number(process.env.RESET_OTP_RESET_MAX || 5);
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 const normalizeString = (value) => (typeof value === "string" ? value.trim() : "");
 const normalizeRole = (value) => normalizeString(value).toLowerCase();
+const normalizePhone = (value) =>
+  normalizeString(value)
+    .replace(/\s+/g, "")
+    .replace(/(?!^\+)[^\d]/g, "");
+const isValidPhone = (value) => /^\+?\d{8,15}$/.test(normalizePhone(value));
 
 const createOtpCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 const hashOtp = (otp, userId) =>
@@ -30,6 +36,7 @@ const hashOtp = (otp, userId) =>
 const isValidOtp = (otp) => /^\d{6}$/.test(normalizeString(otp));
 const includeDevOtp = process.env.NODE_ENV !== "production";
 const genericOtpResponseMessage = "If this account exists, an OTP has been sent to the registered email.";
+const genericPhoneOtpResponseMessage = "If this account exists, an OTP has been sent to the registered phone number.";
 const otpRateLimitStore = new Map();
 
 const buildRateLimitKey = (req, scope, email = "", role = "") => {
@@ -168,19 +175,25 @@ router.post("/register", async (req, res) => {
 // ========== LOGIN ==========
 router.post("/login", async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, phone, password, role } = req.body;
     const normalizedEmail = normalizeString(email).toLowerCase();
     const normalizedRole = normalizeString(role).toLowerCase();
-    if (!normalizedEmail || !password) {
-      return res.status(400).json({ error: "Email and password are required." });
+    const normalizedPhone = normalizePhone(phone);
+    if ((!normalizedEmail && !normalizedPhone) || !password) {
+      return res.status(400).json({ error: "Email or phone and password are required." });
+    }
+    if (normalizedPhone && !isValidPhone(normalizedPhone)) {
+      return res.status(400).json({ error: "Please provide a valid phone number." });
     }
 
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) return res.status(401).json({ error: "Invalid email or password." });
+    const user = normalizedEmail
+      ? await User.findOne({ email: normalizedEmail })
+      : await User.findOne({ phone: normalizedPhone });
+    if (!user) return res.status(401).json({ error: "Invalid credentials." });
     if (normalizedRole && user.role !== normalizedRole) return res.status(401).json({ error: `This account is not a ${normalizedRole} account.` });
 
     const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(401).json({ error: "Invalid email or password." });
+    if (!isMatch) return res.status(401).json({ error: "Invalid credentials." });
 
     if (user.status === "suspended") return res.status(403).json({ error: "Account suspended. Contact admin." });
     if (["inactive", "pending"].includes(user.status) && user.role !== "customer") {
@@ -323,6 +336,75 @@ router.post("/forgot-password", requestResetOtpHandler);
 router.post("/request-reset-otp", requestResetOtpHandler);
 router.post("/forgot-password-otp", requestResetOtpHandler);
 
+// ========== REQUEST RESET OTP (PHONE) ==========
+const requestResetOtpPhoneHandler = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const role = normalizeRole(req.body.role);
+
+    const requestLimitKey = buildRateLimitKey(req, "reset_otp_request_phone", phone, role);
+    if (!consumeRateLimit(requestLimitKey, OTP_REQUEST_LIMIT_MAX, OTP_REQUEST_LIMIT_WINDOW_MS)) {
+      return res.status(429).json({ error: "Too many OTP requests. Please try again later." });
+    }
+
+    if (!phone || !isValidPhone(phone)) {
+      return res.status(400).json({ error: "Please provide a valid phone number." });
+    }
+    if (role && !RESET_PASSWORD_ROLES.includes(role)) {
+      return res.status(400).json({ error: "Invalid role provided." });
+    }
+
+    const userFilter = role ? { phone, role } : { phone };
+    const user = await User.findOne(userFilter);
+
+    if (!user) {
+      return res.json({ message: genericPhoneOtpResponseMessage });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    user.resetPasswordOtpExpiresAt = expiresAt;
+    user.resetPasswordOtpVerifiedAt = null;
+    user.resetPasswordOtpRequestedAt = now;
+
+    if (isTwilioConfigured()) {
+      const deliveryResult = await sendPhoneOtp(phone);
+      if (!deliveryResult.sent) {
+        if (process.env.NODE_ENV === "production") {
+          console.error(
+            `[RESET_OTP_PHONE] delivery failed for user=${user.phone} role=${user.role} reason=${deliveryResult.reason || "unknown"}`
+          );
+          return res.status(503).json({ error: "OTP delivery service is unavailable. Please try again later." });
+        }
+        console.warn("[RESET_OTP_PHONE] Twilio config present but delivery failed. Falling back to dev OTP.");
+      } else {
+        await user.save();
+        return res.json({ message: genericPhoneOtpResponseMessage });
+      }
+    }
+
+    const otp = createOtpCode();
+    const otpHash = hashOtp(otp, user._id.toString());
+    user.resetPasswordOtpHash = otpHash;
+    await user.save();
+
+    if (includeDevOtp) {
+      console.log(
+        `[RESET_OTP_PHONE] user=${user.phone} role=${user.role} otp=${otp} expiresAt=${expiresAt.toISOString()}`
+      );
+    }
+
+    return res.json({
+      message: genericPhoneOtpResponseMessage,
+      ...(includeDevOtp ? { otp } : {}),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+router.post("/request-reset-otp-phone", requestResetOtpPhoneHandler);
+
 // ========== VERIFY RESET OTP ==========
 const verifyResetOtpHandler = async (req, res) => {
   try {
@@ -373,6 +455,65 @@ const verifyResetOtpHandler = async (req, res) => {
 
 router.post("/verify-reset-otp", verifyResetOtpHandler);
 router.post("/verify-otp", verifyResetOtpHandler);
+
+// ========== VERIFY RESET OTP (PHONE) ==========
+const verifyResetOtpPhoneHandler = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const otp = normalizeString(req.body.otp);
+    const role = normalizeRole(req.body.role);
+
+    const verifyLimitKey = buildRateLimitKey(req, "reset_otp_verify_phone", phone, role);
+    if (!consumeRateLimit(verifyLimitKey, OTP_VERIFY_LIMIT_MAX, OTP_VERIFY_LIMIT_WINDOW_MS)) {
+      return res.status(429).json({ error: "Too many OTP verification attempts. Please try again later." });
+    }
+
+    if (!phone || !isValidPhone(phone)) {
+      return res.status(400).json({ error: "Please provide a valid phone number." });
+    }
+    if (!isValidOtp(otp)) {
+      return res.status(400).json({ error: "OTP must be 6 digits." });
+    }
+    if (role && !RESET_PASSWORD_ROLES.includes(role)) {
+      return res.status(400).json({ error: "Invalid role provided." });
+    }
+
+    const userFilter = role ? { phone, role } : { phone };
+    const user = await User.findOne(userFilter);
+
+    if (!user || !user.resetPasswordOtpExpiresAt || new Date(user.resetPasswordOtpExpiresAt).getTime() < Date.now()) {
+      return res.status(400).json({ error: "OTP is invalid or expired." });
+    }
+
+    if (isTwilioConfigured()) {
+      const verification = await verifyPhoneOtp(phone, otp);
+      if (!verification.verified) {
+        return res.status(400).json({ error: "OTP is invalid or expired." });
+      }
+      user.resetPasswordOtpVerifiedAt = new Date();
+      await user.save();
+      return res.json({ message: "OTP verified successfully." });
+    }
+
+    if (!user.resetPasswordOtpHash) {
+      return res.status(400).json({ error: "OTP is invalid or expired." });
+    }
+
+    const inputHash = hashOtp(otp, user._id.toString());
+    if (inputHash !== user.resetPasswordOtpHash) {
+      return res.status(400).json({ error: "OTP is invalid or expired." });
+    }
+
+    user.resetPasswordOtpVerifiedAt = new Date();
+    await user.save();
+
+    return res.json({ message: "OTP verified successfully." });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+router.post("/verify-reset-otp-phone", verifyResetOtpPhoneHandler);
 
 // ========== RESET PASSWORD WITH OTP ==========
 const resetPasswordWithOtpHandler = async (req, res) => {
@@ -431,5 +572,70 @@ const resetPasswordWithOtpHandler = async (req, res) => {
 
 router.post("/reset-password", resetPasswordWithOtpHandler);
 router.post("/reset-password-with-otp", resetPasswordWithOtpHandler);
+
+// ========== RESET PASSWORD WITH OTP (PHONE) ==========
+const resetPasswordWithOtpPhoneHandler = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const otp = normalizeString(req.body.otp);
+    const newPassword = normalizeString(req.body.newPassword);
+    const role = normalizeRole(req.body.role);
+
+    const resetLimitKey = buildRateLimitKey(req, "reset_password_with_otp_phone", phone, role);
+    if (!consumeRateLimit(resetLimitKey, OTP_RESET_LIMIT_MAX, OTP_RESET_LIMIT_WINDOW_MS)) {
+      return res.status(429).json({ error: "Too many reset attempts. Please try again later." });
+    }
+
+    if (!phone || !isValidPhone(phone)) {
+      return res.status(400).json({ error: "Please provide a valid phone number." });
+    }
+    if (!isValidOtp(otp)) {
+      return res.status(400).json({ error: "OTP must be 6 digits." });
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "New password must be at least 6 characters long." });
+    }
+    if (role && !RESET_PASSWORD_ROLES.includes(role)) {
+      return res.status(400).json({ error: "Invalid role provided." });
+    }
+
+    const userFilter = role ? { phone, role } : { phone };
+    const user = await User.findOne(userFilter);
+    if (
+      !user ||
+      !user.resetPasswordOtpExpiresAt ||
+      new Date(user.resetPasswordOtpExpiresAt).getTime() < Date.now()
+    ) {
+      return res.status(400).json({ error: "OTP is invalid or expired." });
+    }
+
+    const inputHash = hashOtp(otp, user._id.toString());
+    if (!isTwilioConfigured()) {
+      if (!user.resetPasswordOtpHash || inputHash !== user.resetPasswordOtpHash) {
+        return res.status(400).json({ error: "OTP is invalid or expired." });
+      }
+    } else {
+      if (!user.resetPasswordOtpVerifiedAt) {
+        const verification = await verifyPhoneOtp(phone, otp);
+        if (!verification.verified) {
+          return res.status(400).json({ error: "OTP is invalid or expired." });
+        }
+      }
+    }
+
+    user.password = newPassword;
+    user.resetPasswordOtpHash = "";
+    user.resetPasswordOtpExpiresAt = null;
+    user.resetPasswordOtpVerifiedAt = null;
+    user.resetPasswordOtpRequestedAt = null;
+    await user.save();
+
+    return res.json({ message: "Password reset successful." });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+router.post("/reset-password-phone", resetPasswordWithOtpPhoneHandler);
 
 module.exports = router;
